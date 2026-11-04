@@ -146,7 +146,7 @@ final class WorkersIntegrationTest extends TestCase
     }
 
     /**
-     * Fails as long as DoctrineSubscriptionStore writes the position after a lost connection, see "Known issues" in docs/decisions.md
+     * Requires the fix of wwwision/subscription-engine-doctrine, see "Known issues" in docs/decisions.md
      */
     #[Test]
     #[DataProvider('waiters')]
