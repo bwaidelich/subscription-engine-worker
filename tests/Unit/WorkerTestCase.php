@@ -20,6 +20,7 @@ use Wwwision\SubscriptionEngine\Tests\Mocks\InMemorySubscriptionStore;
 use Wwwision\SubscriptionEngine\Tests\Mocks\MockEvent;
 use Wwwision\SubscriptionEngineWorker\Tests\Unit\Fixture\FakeClock;
 use Wwwision\SubscriptionEngineWorker\Tests\Unit\Fixture\FakeWaiter;
+use Wwwision\SubscriptionEngineWorker\Tests\Unit\Fixture\FlakyStore;
 use Wwwision\SubscriptionEngineWorker\Worker;
 use Wwwision\SubscriptionEngineWorker\WorkerOptions;
 
@@ -30,6 +31,7 @@ abstract class WorkerTestCase extends TestCase
 {
     protected InMemoryEventStoreAdapter $eventStore;
     protected InMemorySubscriptionStore $store;
+    protected FlakyStore $flakyStore;
     protected FakeClock $clock;
     protected FakeWaiter $waiter;
     protected FakeWaiter $sleeper;
@@ -44,6 +46,7 @@ abstract class WorkerTestCase extends TestCase
     {
         $this->eventStore = new InMemoryEventStoreAdapter();
         $this->store = new InMemorySubscriptionStore();
+        $this->flakyStore = new FlakyStore($this->store);
         $this->clock = new FakeClock();
         $this->waiter = new FakeWaiter($this->clock);
         $this->sleeper = new FakeWaiter($this->clock);
@@ -70,7 +73,7 @@ abstract class WorkerTestCase extends TestCase
             }
             $this->handled[$id][] = $event->position->value;
         }), $subscriptionIds);
-        return new SubscriptionEngine($this->eventStore, $this->store, Subscribers::fromArray($subscribers));
+        return new SubscriptionEngine($this->eventStore, $this->flakyStore, Subscribers::fromArray($subscribers));
     }
 
     protected function worker(SubscriptionEngine $engine, WorkerOptions $options, LoggerInterface|null $logger = null): Worker

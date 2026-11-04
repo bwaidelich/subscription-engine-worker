@@ -4,11 +4,17 @@ declare(strict_types=1);
 
 namespace Wwwision\SubscriptionEngineWorker;
 
+use Exception;
 use LogicException;
 use Psr\Clock\ClockInterface;
 use Psr\Log\LoggerInterface;
 use Random\Randomizer;
+use Wwwision\SubscriptionEngine\Engine\EngineEvent\CatchUpFinished;
+use Wwwision\SubscriptionEngine\Engine\EngineEvent\CatchUpRunFailed;
+use Wwwision\SubscriptionEngine\Engine\EngineEvent\EngineEvent;
 use Wwwision\SubscriptionEngine\Engine\ProcessedResult;
+use Wwwision\SubscriptionEngine\Engine\SubscriptionEngineCriteria;
+use Wwwision\SubscriptionEngine\Subscription\SubscriptionStatus;
 use Wwwision\SubscriptionEngine\SubscriptionEngine;
 
 /**
@@ -19,6 +25,10 @@ final class Worker
     private const LOCKED_SLEEP_MIN_SECONDS = 0.1;
     private const LOCKED_SLEEP_MAX_SECONDS = 0.5;
     private const MAX_RUNTIME_JITTER = 0.1;
+    private const BACKOFF_JITTER = 0.2;
+    private const FAILED_RUN_MAX_DELAY_SECONDS = 60.0;
+    private const FAILURE_MAX_DELAY_SECONDS = 30.0;
+    private const GIVE_UP_AFTER_SECONDS = 300.0;
 
     private readonly ClockInterface $clock;
     private readonly Waiter $sleeper;
@@ -27,6 +37,16 @@ final class Worker
     private int $iterations = 0;
     private float|null $deadline = null;
     private bool $signalReceived = false;
+    private bool $recoverRequired = false;
+    private float|null $failingSince = null;
+    private int $consecutiveFailures = 0;
+
+    /**
+     * Subscriptions with a failed run, by id. They are left out of claims until the delay has expired
+     *
+     * @var array<string, array{attempts: int, until: float, retried: bool}>
+     */
+    private array $backoffs = [];
 
     /**
      * @param SubscriptionEngine<object> $engine
@@ -46,6 +66,7 @@ final class Worker
         $this->clock = $clock ?? new SystemClock();
         $this->sleeper = $sleeper ?? new SleepWaiter();
         $this->randomizer = $randomizer ?? new Randomizer();
+        $this->engine->onEngineEvent($this->onEngineEvent(...));
     }
 
     public function run(): StopReason
@@ -57,7 +78,7 @@ final class Worker
         $restoreSignalHandlers = $this->installSignalHandlers();
         try {
             while (true) {
-                $stopReason = $this->stopReason() ?? $this->cycle();
+                $stopReason = $this->stopReason() ?? $this->cycleWithRecovery();
                 if ($stopReason !== null) {
                     return $stopReason;
                 }
@@ -97,12 +118,42 @@ final class Worker
         };
     }
 
+    /**
+     * @throws WorkerFailed
+     */
+    private function cycleWithRecovery(): StopReason|null
+    {
+        try {
+            $stopReason = $this->cycle();
+            $this->failingSince = null;
+            $this->consecutiveFailures = 0;
+            return $stopReason;
+        } catch (Exception $e) {
+            $this->failingSince ??= $this->now();
+            if ($this->now() - $this->failingSince >= self::GIVE_UP_AFTER_SECONDS) {
+                throw WorkerFailed::after(self::GIVE_UP_AFTER_SECONDS, $e);
+            }
+            $this->consecutiveFailures++;
+            $this->recover();
+            $this->sleeper->wait($this->untilDeadline($this->withBackoffJitter(min(2 ** ($this->consecutiveFailures - 1), self::FAILURE_MAX_DELAY_SECONDS))));
+            return null;
+        }
+    }
+
     private function cycle(): StopReason|null
     {
+        $criteria = $this->claimCriteria();
+        if ($criteria === null) {
+            $this->waiter->wait($this->idleWaitSeconds());
+            return null;
+        }
         $hasPendingEvents = false;
         $allLocked = false;
         foreach ([$this->engine->bootNext(...), $this->engine->catchUpNextActive(...)] as $catchUp) {
-            $result = $catchUp($this->options->criteria, $this->options->limit);
+            $result = $catchUp($criteria, $this->options->limit);
+            if ($this->recoverRequired) {
+                $this->recover();
+            }
             $stopReason = $this->stopReasonAfterBatch($result);
             if ($stopReason !== null) {
                 return $stopReason;
@@ -119,8 +170,95 @@ final class Worker
             $this->sleeper->wait($this->untilDeadline($this->randomizer->getFloat(self::LOCKED_SLEEP_MIN_SECONDS, self::LOCKED_SLEEP_MAX_SECONDS)));
             return null;
         }
-        $this->waiter->wait($this->untilDeadline($this->options->maxIdleWait));
+        if ($this->grantRetryCycle()) {
+            $this->waiter->wait(0.0);
+            return null;
+        }
+        $this->waiter->wait($this->idleWaitSeconds());
         return null;
+    }
+
+    /**
+     * @return SubscriptionEngineCriteria|null The criteria for the next claims, NULL if all subscriptions are backing off
+     */
+    private function claimCriteria(): SubscriptionEngineCriteria|null
+    {
+        $now = $this->now();
+        $backingOff = array_keys(array_filter($this->backoffs, static fn(array $backoff) => $backoff['until'] > $now));
+        if ($backingOff === []) {
+            return $this->options->criteria ?? SubscriptionEngineCriteria::noConstraints();
+        }
+        $ids = [];
+        foreach ($this->engine->getSubscriptions($this->options->criteria) as $subscription) {
+            if (in_array($subscription->status, [SubscriptionStatus::ACTIVE, SubscriptionStatus::BOOTING], true) && !in_array($subscription->id->value, $backingOff, true)) {
+                $ids[] = $subscription->id;
+            }
+        }
+        return $ids !== [] ? SubscriptionEngineCriteria::create($ids) : null;
+    }
+
+    /**
+     * The engine clears its set-aside only in an idle run, so that run could not retry the subscription yet. Without one more cycle the retry would have to wait for the next wake-up
+     */
+    private function grantRetryCycle(): bool
+    {
+        $now = $this->now();
+        $granted = false;
+        foreach ($this->backoffs as $id => $backoff) {
+            if ($backoff['until'] <= $now && !$backoff['retried']) {
+                $this->backoffs[$id]['retried'] = true;
+                $granted = true;
+            }
+        }
+        return $granted;
+    }
+
+    private function idleWaitSeconds(): float
+    {
+        $seconds = $this->options->maxIdleWait;
+        $now = $this->now();
+        foreach ($this->backoffs as $backoff) {
+            if ($backoff['until'] > $now) {
+                $seconds = min($seconds, $backoff['until'] - $now);
+            }
+        }
+        return $this->untilDeadline($seconds);
+    }
+
+    /**
+     * @param EngineEvent<object|void> $event
+     */
+    private function onEngineEvent(EngineEvent $event): void
+    {
+        if ($event instanceof CatchUpRunFailed) {
+            $attempts = ($this->backoffs[$event->subscription->id->value]['attempts'] ?? 0) + 1;
+            $delay = $this->withBackoffJitter(min(2 ** ($attempts - 1), self::FAILED_RUN_MAX_DELAY_SECONDS));
+            $this->backoffs[$event->subscription->id->value] = ['attempts' => $attempts, 'until' => $this->now() + $delay, 'retried' => false];
+            $this->recoverRequired = true;
+        }
+        if ($event instanceof CatchUpFinished) {
+            foreach ($event->subscriptions as $subscription) {
+                unset($this->backoffs[$subscription->id->value]);
+            }
+        }
+    }
+
+    private function recover(): void
+    {
+        $this->recoverRequired = false;
+        if ($this->options->recover === null) {
+            return;
+        }
+        try {
+            ($this->options->recover)();
+        } catch (Exception) {
+            // if this was necessary, the next attempt fails as well
+        }
+    }
+
+    private function withBackoffJitter(float $seconds): float
+    {
+        return $seconds * $this->randomizer->getFloat(1 - self::BACKOFF_JITTER, 1 + self::BACKOFF_JITTER);
     }
 
     private function stopReasonAfterBatch(ProcessedResult $result): StopReason|null

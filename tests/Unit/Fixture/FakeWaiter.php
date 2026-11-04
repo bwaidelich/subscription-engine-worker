@@ -21,12 +21,15 @@ final class FakeWaiter implements Waiter
     public function __construct(
         private readonly FakeClock $clock,
         public Closure|null $onWait = null,
+        public bool $usesUpTimeout = true,
     ) {}
 
     public function wait(float $timeoutSeconds): void
     {
         $this->timeouts[] = $timeoutSeconds;
-        $this->clock->advance($timeoutSeconds);
+        if ($this->usesUpTimeout) {
+            $this->clock->advance($timeoutSeconds);
+        }
         if ($this->onWait !== null) {
             ($this->onWait)($timeoutSeconds, count($this->timeouts));
         }
