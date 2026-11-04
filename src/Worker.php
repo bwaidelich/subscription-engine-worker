@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Wwwision\SubscriptionEngineWorker;
 
+use LogicException;
 use Psr\Clock\ClockInterface;
 use Psr\Log\LoggerInterface;
 use Random\Randomizer;
@@ -25,6 +26,7 @@ final class Worker
 
     private int $iterations = 0;
     private float|null $deadline = null;
+    private bool $signalReceived = false;
 
     /**
      * @param SubscriptionEngine<object> $engine
@@ -52,12 +54,47 @@ final class Worker
         $this->deadline = $this->options->maxRuntime !== null
             ? $this->now() + $this->options->maxRuntime * (1 + $this->randomizer->getFloat(0.0, self::MAX_RUNTIME_JITTER))
             : null;
-        while (true) {
-            $stopReason = $this->stopReason() ?? $this->cycle();
-            if ($stopReason !== null) {
-                return $stopReason;
+        $restoreSignalHandlers = $this->installSignalHandlers();
+        try {
+            while (true) {
+                $stopReason = $this->stopReason() ?? $this->cycle();
+                if ($stopReason !== null) {
+                    return $stopReason;
+                }
             }
+        } finally {
+            $restoreSignalHandlers();
         }
+    }
+
+    /**
+     * The handlers only set a flag, so that a running batch is finished and its transaction committed
+     *
+     * @return callable(): void restores the previous state
+     */
+    private function installSignalHandlers(): callable
+    {
+        $this->signalReceived = false;
+        if (!$this->options->handleSignals) {
+            return static function (): void {};
+        }
+        if (!function_exists('pcntl_async_signals')) {
+            throw new LogicException('Handling signals requires ext-pcntl. Install it, or disable this with the option handleSignals: false', 1793840001);
+        }
+        $previousAsyncSignals = pcntl_async_signals(true);
+        $previousHandlers = [];
+        foreach ([SIGTERM, SIGINT] as $signal) {
+            $previousHandlers[$signal] = pcntl_signal_get_handler($signal);
+            pcntl_signal($signal, function (): void {
+                $this->signalReceived = true;
+            });
+        }
+        return static function () use ($previousAsyncSignals, $previousHandlers): void {
+            foreach ($previousHandlers as $signal => $handler) {
+                pcntl_signal($signal, $handler);
+            }
+            pcntl_async_signals($previousAsyncSignals);
+        };
     }
 
     private function cycle(): StopReason|null
@@ -102,6 +139,9 @@ final class Worker
 
     private function stopReason(): StopReason|null
     {
+        if ($this->signalReceived) {
+            return StopReason::Signal;
+        }
         if ($this->deadline !== null && $this->now() >= $this->deadline) {
             return StopReason::MaxRuntime;
         }
