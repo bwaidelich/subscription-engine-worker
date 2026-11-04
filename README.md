@@ -88,7 +88,7 @@ Subscriber::create(
     setup: static function () use ($connection): void {
         $connection->executeStatement('CREATE TABLE IF NOT EXISTS event_log (position BIGINT PRIMARY KEY, type TEXT NOT NULL)');
     },
-    reset2: static function () use ($connection): void {
+    reset: static function () use ($connection): void {
         $connection->executeStatement('TRUNCATE event_log');
     },
 ),
