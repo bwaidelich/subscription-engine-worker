@@ -8,6 +8,8 @@ use Exception;
 use LogicException;
 use Psr\Clock\ClockInterface;
 use Psr\Log\LoggerInterface;
+use Psr\Log\LogLevel;
+use Psr\Log\NullLogger;
 use Random\Randomizer;
 use Wwwision\SubscriptionEngine\Engine\EngineEvent\CatchUpFinished;
 use Wwwision\SubscriptionEngine\Engine\EngineEvent\CatchUpRunFailed;
@@ -29,7 +31,9 @@ final class Worker
     private const FAILED_RUN_MAX_DELAY_SECONDS = 60.0;
     private const FAILURE_MAX_DELAY_SECONDS = 30.0;
     private const GIVE_UP_AFTER_SECONDS = 300.0;
+    private const ERROR_REPORT_INTERVAL_SECONDS = 300.0;
 
+    private readonly LoggerInterface $logger;
     private readonly ClockInterface $clock;
     private readonly Waiter $sleeper;
     private readonly Randomizer $randomizer;
@@ -40,6 +44,7 @@ final class Worker
     private bool $recoverRequired = false;
     private float|null $failingSince = null;
     private int $consecutiveFailures = 0;
+    private float|null $nextErrorReport = null;
 
     /**
      * Subscriptions with a failed run, by id. They are left out of claims until the delay has expired
@@ -63,23 +68,30 @@ final class Worker
         Waiter|null $sleeper = null,
         Randomizer|null $randomizer = null,
     ) {
+        $this->logger = $logger ?? new NullLogger();
         $this->clock = $clock ?? new SystemClock();
         $this->sleeper = $sleeper ?? new SleepWaiter();
         $this->randomizer = $randomizer ?? new Randomizer();
         $this->engine->onEngineEvent($this->onEngineEvent(...));
+        if ($logger !== null) {
+            $this->engine->onEngineEvent($this->logEngineEvent(...));
+        }
     }
 
     public function run(): StopReason
     {
         $this->iterations = 0;
+        $this->nextErrorReport = null;
         $this->deadline = $this->options->maxRuntime !== null
             ? $this->now() + $this->options->maxRuntime * (1 + $this->randomizer->getFloat(0.0, self::MAX_RUNTIME_JITTER))
             : null;
         $restoreSignalHandlers = $this->installSignalHandlers();
+        $this->logger->info(sprintf('Worker started (pid: %d)', getmypid()));
         try {
             while (true) {
                 $stopReason = $this->stopReason() ?? $this->cycleWithRecovery();
                 if ($stopReason !== null) {
+                    $this->logger->info(sprintf('Worker stopped: %s', $stopReason->value));
                     return $stopReason;
                 }
             }
@@ -124,7 +136,13 @@ final class Worker
     private function cycleWithRecovery(): StopReason|null
     {
         try {
+            if ($this->options->onHeartbeat !== null) {
+                ($this->options->onHeartbeat)();
+            }
             $stopReason = $this->cycle();
+            if ($this->consecutiveFailures > 0) {
+                $this->logger->info(sprintf('Recovered after %d failure%s', $this->consecutiveFailures, $this->consecutiveFailures > 1 ? 's' : ''));
+            }
             $this->failingSince = null;
             $this->consecutiveFailures = 0;
             return $stopReason;
@@ -135,13 +153,16 @@ final class Worker
             }
             $this->consecutiveFailures++;
             $this->recover();
-            $this->sleeper->wait($this->untilDeadline($this->withBackoffJitter(min(2 ** ($this->consecutiveFailures - 1), self::FAILURE_MAX_DELAY_SECONDS))));
+            $delay = $this->withBackoffJitter(min(2 ** ($this->consecutiveFailures - 1), self::FAILURE_MAX_DELAY_SECONDS));
+            $this->logger->warning(sprintf('Cycle failed, trying again in %.1f seconds: %s', $delay, $e->getMessage()));
+            $this->sleeper->wait($this->untilDeadline($delay));
             return null;
         }
     }
 
     private function cycle(): StopReason|null
     {
+        $this->reportSubscriptionsInError();
         $criteria = $this->claimCriteria();
         if ($criteria === null) {
             $this->waiter->wait($this->idleWaitSeconds());
@@ -235,6 +256,7 @@ final class Worker
             $delay = $this->withBackoffJitter(min(2 ** ($attempts - 1), self::FAILED_RUN_MAX_DELAY_SECONDS));
             $this->backoffs[$event->subscription->id->value] = ['attempts' => $attempts, 'until' => $this->now() + $delay, 'retried' => false];
             $this->recoverRequired = true;
+            $this->logger->warning(sprintf('Backing off from subscription "%s" for %.1f seconds (attempt %d)', $event->subscription->id->value, $delay, $attempts));
         }
         if ($event instanceof CatchUpFinished) {
             foreach ($event->subscriptions as $subscription) {
@@ -251,9 +273,44 @@ final class Worker
         }
         try {
             ($this->options->recover)();
-        } catch (Exception) {
+        } catch (Exception $e) {
             // if this was necessary, the next attempt fails as well
+            $this->logger->warning(sprintf('The recover callback failed: %s', $e->getMessage()));
         }
+    }
+
+    /**
+     * Subscriptions in ERROR are never retried, and without a report they would go unnoticed
+     */
+    private function reportSubscriptionsInError(): void
+    {
+        $now = $this->now();
+        if ($this->nextErrorReport !== null && $now < $this->nextErrorReport) {
+            return;
+        }
+        foreach ($this->engine->getSubscriptions($this->options->criteria) as $subscription) {
+            if ($subscription->status === SubscriptionStatus::ERROR) {
+                $this->logger->warning(sprintf('Subscription "%s" is in status ERROR and needs a reset: %s', $subscription->id->value, $subscription->error->errorMessage ?? 'unknown error'));
+            }
+        }
+        $this->nextErrorReport = $now + self::ERROR_REPORT_INTERVAL_SECONDS;
+    }
+
+    /**
+     * @param EngineEvent<object|void> $event
+     */
+    private function logEngineEvent(EngineEvent $event): void
+    {
+        $this->logger->log(match ($event->logLevel()) {
+            LOG_EMERG => LogLevel::EMERGENCY,
+            LOG_ALERT => LogLevel::ALERT,
+            LOG_CRIT => LogLevel::CRITICAL,
+            LOG_ERR => LogLevel::ERROR,
+            LOG_WARNING => LogLevel::WARNING,
+            LOG_NOTICE => LogLevel::NOTICE,
+            LOG_INFO => LogLevel::INFO,
+            default => LogLevel::DEBUG,
+        }, (string) $event);
     }
 
     private function withBackoffJitter(float $seconds): float

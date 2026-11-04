@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Wwwision\SubscriptionEngineWorker;
 
 use Closure;
+use InvalidArgumentException;
 use Wwwision\SubscriptionEngine\Engine\SubscriptionEngineCriteria;
 
 final readonly class WorkerOptions
@@ -47,6 +48,21 @@ final readonly class WorkerOptions
         callable|null $onHeartbeat = null,
         bool $handleSignals = true,
     ): self {
+        if ($limit < 1) {
+            throw new InvalidArgumentException(sprintf('limit has to be a positive integer, got: %d', $limit), 1793840011);
+        }
+        if ($maxIdleWait <= 0.0) {
+            throw new InvalidArgumentException(sprintf('maxIdleWait has to be greater than 0, got: %f', $maxIdleWait), 1793840012);
+        }
+        if ($maxRuntime !== null && $maxRuntime <= 0.0) {
+            throw new InvalidArgumentException(sprintf('maxRuntime has to be greater than 0, got: %f', $maxRuntime), 1793840013);
+        }
+        if ($maxIterations !== null && $maxIterations < 1) {
+            throw new InvalidArgumentException(sprintf('maxIterations has to be a positive integer, got: %d', $maxIterations), 1793840014);
+        }
+        if ($memoryLimit !== null && $memoryLimit < 1) {
+            throw new InvalidArgumentException(sprintf('memoryLimit has to be a positive integer, got: %d', $memoryLimit), 1793840015);
+        }
         return new self(
             $limit,
             $criteria,
