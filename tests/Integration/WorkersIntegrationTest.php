@@ -145,9 +145,6 @@ final class WorkersIntegrationTest extends TestCase
         self::assertSame(0, $this->workers['successor']['exitCode'], $this->workers['successor']['stderr']);
     }
 
-    /**
-     * Requires the fix of wwwision/subscription-engine-doctrine, see "Known issues" in docs/decisions.md
-     */
     #[Test]
     #[DataProvider('waiters')]
     public function workersRecoverIfTheirConnectionsAreTerminatedInTheMiddleOfABatch(string $waiter): void
