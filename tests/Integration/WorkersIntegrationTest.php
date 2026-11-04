@@ -215,6 +215,30 @@ final class WorkersIntegrationTest extends TestCase
                 }
                 usleep(10_000);
             }
+            $output = [];
+            exec(sprintf('DATABASE_DSN=%s %s %s 2>&1', escapeshellarg($environment['DATABASE_DSN']), escapeshellarg(PHP_BINARY), escapeshellarg($root . 'append-event.php')), $output, $exitCode);
+            self::assertSame(0, $exitCode, implode("\n", $output));
+            $deadline = microtime(true) + 20.0;
+            while ((int) $this->connection->fetchOne('SELECT COUNT(*) FROM some_projection') < 4) {
+                if (microtime(true) > $deadline) {
+                    self::fail('The example did not process the appended event: ' . file_get_contents($stderr));
+                }
+                usleep(10_000);
+            }
+            $output = [];
+            exec(sprintf('DATABASE_DSN=%s %s %s some-projection 2>&1', escapeshellarg($environment['DATABASE_DSN']), escapeshellarg(PHP_BINARY), escapeshellarg($root . 'reset.php')), $output, $exitCode);
+            self::assertSame(0, $exitCode, implode("\n", $output));
+            // a reset sends no notification, so a new event wakes up the idle worker
+            $output = [];
+            exec(sprintf('DATABASE_DSN=%s %s %s 2>&1', escapeshellarg($environment['DATABASE_DSN']), escapeshellarg(PHP_BINARY), escapeshellarg($root . 'append-event.php')), $output, $exitCode);
+            self::assertSame(0, $exitCode, implode("\n", $output));
+            $deadline = microtime(true) + 20.0;
+            while ($this->connection->fetchOne('SELECT status FROM subscriptions WHERE id = ?', ['some-projection']) !== 'ACTIVE' || (int) $this->connection->fetchOne('SELECT COUNT(*) FROM some_projection') < 5) {
+                if (microtime(true) > $deadline) {
+                    self::fail('The example did not rebuild the projection: ' . file_get_contents($stderr));
+                }
+                usleep(10_000);
+            }
             proc_terminate($process, SIGTERM);
             $deadline = microtime(true) + 20.0;
             while (($status = proc_get_status($process))['running']) {

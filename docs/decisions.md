@@ -36,6 +36,7 @@ Applications want to run N identical PHP processes (Supervisor `numprocs`, Kuber
 - **Backoff state is lost on restart and isn't shared.** N workers retry independently, so a failing subscription sees up to N retries per delay.
 - **An error that repeats on PostgreSQL never leads to `ERROR`.** PostgreSQL ends the transaction for every SQL error, so the run fails and the subscription keeps its status. It is retried with backoff forever, only the logs show it. A persisted failure counter remains an open point of core.
 - **A subscriber that was removed while another subscription is in backoff makes the narrowed call fail.** The engine rejects ids without a subscriber, and the worker has no way to list subscribers. The call is handled like a lost connection, and the removed subscriber is detached by the next call without a narrowed criteria.
+- **An old worker detaches a subscription that a setup has just added.** To the engine it looks like a removed subscriber, and a repeated `setup()` doesn't bring it back, only a `reset()` does. So the setup for a new subscriber has to run while no old workers are running: With the workers stopped, or after a rolling update.
 - **The grace period has to exceed the worst-case batch.** Otherwise the process is killed, the batch is rolled back, and repeated by another worker.
 - **A batch of external side effects can repeat.** See "exactly once" above.
 

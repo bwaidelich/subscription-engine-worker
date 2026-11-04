@@ -43,6 +43,9 @@ return (static function (): array {
                 setup: static function () use ($connection): void {
                     $connection->executeStatement('CREATE TABLE IF NOT EXISTS some_projection (position BIGINT PRIMARY KEY)');
                 },
+                reset: static function () use ($connection): void {
+                    $connection->executeStatement('TRUNCATE some_projection');
+                },
             ),
         ]),
     );

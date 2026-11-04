@@ -1,4 +1,4 @@
-# Run once per deployment, before rolling out the workers
+# Run once per deployment, after the workers are rolled out: Old workers would set new subscriptions to DETACHED
 apiVersion: batch/v1
 kind: Job
 metadata:
