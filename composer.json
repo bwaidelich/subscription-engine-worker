@@ -1,0 +1,69 @@
+{
+    "name": "wwwision/subscription-engine-worker",
+    "description": "Long-running worker loop for the wwwision/subscription-engine",
+    "type": "package",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Bastian Waidelich",
+            "email": "b.waidelich@wwwision.de"
+        }
+    ],
+    "funding": [
+        {
+            "type": "github",
+            "url": "https://github.com/sponsors/bwaidelich"
+        },
+        {
+            "type": "paypal",
+            "url": "https://www.paypal.me/bwaidelich"
+        }
+    ],
+    "require": {
+        "php": ">=8.3",
+        "wwwision/subscription-engine": "^2",
+        "psr/clock": "^1",
+        "psr/log": "^1 || ^2 || ^3"
+    },
+    "require-dev": {
+        "ext-pcntl": "*",
+        "ext-pdo_pgsql": "*",
+        "ext-posix": "*",
+        "doctrine/dbal": "^4",
+        "friendsofphp/php-cs-fixer": "^3",
+        "phpstan/phpstan": "^2",
+        "phpunit/phpunit": "^11",
+        "roave/security-advisories": "dev-latest",
+        "symfony/yaml": "^7",
+        "wwwision/dcb-eventstore-doctrine": "dev-main",
+        "wwwision/subscription-engine-dcb-adapter": "dev-main",
+        "wwwision/subscription-engine-doctrine": "dev-main"
+    },
+    "suggest": {
+        "ext-pcntl": "Required for the graceful shutdown on SIGTERM and SIGINT, unless handleSignals is disabled"
+    },
+    "autoload": {
+        "psr-4": {
+            "Wwwision\\SubscriptionEngineWorker\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Wwwision\\SubscriptionEngineWorker\\Tests\\": "tests/",
+            "Wwwision\\SubscriptionEngine\\Tests\\": "vendor/wwwision/subscription-engine/tests/"
+        }
+    },
+    "scripts": {
+        "test:phpstan": "phpstan",
+        "test:cs": "php-cs-fixer check",
+        "test:cs:fix": "php-cs-fixer fix",
+        "test:phpunit": "phpunit",
+        "test": [
+            "@test:phpstan",
+            "@test:cs",
+            "@test:phpunit"
+        ]
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
