@@ -38,3 +38,9 @@ Applications want to run N identical PHP processes (Supervisor `numprocs`, Kuber
 - **A subscriber that was removed while another subscription is in backoff makes the narrowed call fail.** The engine rejects ids without a subscriber, and the worker has no way to list subscribers. The call is handled like a lost connection, and the removed subscriber is detached by the next call without a narrowed criteria.
 - **The grace period has to exceed the worst-case batch.** Otherwise the process is killed, the batch is rolled back, and repeated by another worker.
 - **A batch of external side effects can repeat.** See "exactly once" above.
+
+### Known issues
+
+**`DoctrineSubscriptionStore` can persist a position without its events after a lost connection.** DBAL closes the connection on its own if a statement reports a lost connection, which resets the nesting level. `assertTransactionIsIntact()` returns early if `isTransactionActive()` is `false`, so `update()` reconnects and writes the status and the position in autocommit, while the rows of the batch are gone. In a claimed run this results in `ERROR` at a position ahead of the projection. A blocking run updates its other subscriptions the same way, as `ACTIVE` at a position ahead of their projection. A handler that catches the exception itself has the same effect.
+
+Reproduced by `workersRecoverIfTheirConnectionsAreTerminatedInTheMiddleOfABatch` against PostgreSQL 17: 7 of 8 runs failed. With a temporary change in the vendor copy, where the store remembers that it has begun a transaction and throws if DBAL has none anymore, 8 of 8 runs passed. This requires a fix in `wwwision/subscription-engine-doctrine`, the test stays red until then.

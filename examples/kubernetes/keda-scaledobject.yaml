@@ -1,0 +1,24 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: subscription-worker
+spec:
+  scaleTargetRef:
+    name: subscription-worker
+  # With 0 workers, new events would wait for the next check of KEDA
+  minReplicaCount: 1
+  # No higher than the number of subscriptions, a subscription runs on one worker at a time
+  maxReplicaCount: 4
+  triggers:
+    - type: postgresql
+      metadata:
+        # replicas = result / targetQueryValue, so the result is the number of workers that can do work
+        targetQueryValue: "1"
+        # The event table depends on the event store, this is the one of wwwision/dcb-eventstore-doctrine
+        query: "SELECT COUNT(*) FROM subscriptions WHERE status = 'BOOTING' OR (status = 'ACTIVE' AND (SELECT COALESCE(MAX(sequence_number), 0) FROM events) - position > 100)"
+        host: your-database-host
+        port: "5432"
+        dbName: your-database
+        userName: your-user
+        passwordFromEnv: DATABASE_PASSWORD
+        sslmode: require

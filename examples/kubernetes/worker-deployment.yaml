@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: subscription-worker
+spec:
+  # Scale by changing replicas, or with keda-scaledobject.yaml. More workers than subscriptions add no throughput
+  replicas: 4
+  selector:
+    matchLabels:
+      app: subscription-worker
+  template:
+    metadata:
+      labels:
+        app: subscription-worker
+    spec:
+      # Has to exceed the worst-case batch of your handlers
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: your-app:latest
+          # Exec form without a shell, so that PHP receives SIGTERM
+          command: ["php", "/app/examples/worker.php"]
+          env:
+            - name: DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: subscription-worker
+                  key: database-dsn
+          livenessProbe:
+            # The heartbeat is touched once per cycle, the threshold has to exceed the worst-case batch and maxIdleWait
+            exec:
+              command: ["sh", "-c", "test -n \"$(find /tmp/worker-heartbeat -mmin -5)\""]
+            initialDelaySeconds: 60
+            periodSeconds: 30

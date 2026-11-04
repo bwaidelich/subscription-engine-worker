@@ -1,0 +1,20 @@
+# Run once per deployment, before rolling out the workers
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: subscription-setup
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: setup
+          image: your-app:latest
+          command: ["php", "/app/examples/setup.php"]
+          env:
+            - name: DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: subscription-worker
+                  key: database-dsn
