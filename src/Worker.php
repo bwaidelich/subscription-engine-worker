@@ -49,7 +49,7 @@ final class Worker
     /**
      * Subscriptions with a failed run, by id. They are left out of claims until the delay has expired
      *
-     * @var array<string, array{attempts: int, until: float, retried: bool}>
+     * @var array<string, array{attempts: int, until: float}>
      */
     private array $backoffs = [];
 
@@ -191,10 +191,6 @@ final class Worker
             $this->sleeper->wait($this->untilDeadline($this->randomizer->getFloat(self::LOCKED_SLEEP_MIN_SECONDS, self::LOCKED_SLEEP_MAX_SECONDS)));
             return null;
         }
-        if ($this->grantRetryCycle()) {
-            $this->waiter->wait(0.0);
-            return null;
-        }
         $this->waiter->wait($this->idleWaitSeconds());
         return null;
     }
@@ -218,22 +214,6 @@ final class Worker
         return $ids !== [] ? SubscriptionEngineCriteria::create($ids) : null;
     }
 
-    /**
-     * The engine clears its set-aside only in an idle run, so that run could not retry the subscription yet. Without one more cycle the retry would have to wait for the next wake-up
-     */
-    private function grantRetryCycle(): bool
-    {
-        $now = $this->now();
-        $granted = false;
-        foreach ($this->backoffs as $id => $backoff) {
-            if ($backoff['until'] <= $now && !$backoff['retried']) {
-                $this->backoffs[$id]['retried'] = true;
-                $granted = true;
-            }
-        }
-        return $granted;
-    }
-
     private function idleWaitSeconds(): float
     {
         $seconds = $this->options->maxIdleWait;
@@ -254,7 +234,7 @@ final class Worker
         if ($event instanceof CatchUpRunFailed) {
             $attempts = ($this->backoffs[$event->subscription->id->value]['attempts'] ?? 0) + 1;
             $delay = $this->withBackoffJitter(min(2 ** ($attempts - 1), self::FAILED_RUN_MAX_DELAY_SECONDS));
-            $this->backoffs[$event->subscription->id->value] = ['attempts' => $attempts, 'until' => $this->now() + $delay, 'retried' => false];
+            $this->backoffs[$event->subscription->id->value] = ['attempts' => $attempts, 'until' => $this->now() + $delay];
             $this->recoverRequired = true;
             $this->logger->warning(sprintf('Backing off from subscription "%s" for %.1f seconds (attempt %d)', $event->subscription->id->value, $delay, $attempts));
         }
