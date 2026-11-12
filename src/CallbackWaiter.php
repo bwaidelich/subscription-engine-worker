@@ -7,7 +7,7 @@ namespace Wwwision\SubscriptionEngineWorker;
 use Closure;
 
 /**
- * Adapter for anything that can wait, for example the LISTEN waiter of wwwision/dcb-eventstore-doctrine:
+ * Adapter for anything that can wait, for example the waiter of wwwision/dcb-eventstore-doctrine:
  *
  * new CallbackWaiter($eventStore->createWaiter($dedicatedConnection)->waitForNewEvents(...))
  */
