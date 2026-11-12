@@ -75,6 +75,12 @@ The scripts in [examples](./examples) are small on purpose, copy them to your ap
 
 ## How-to guides
 
+- **Develop:** [Add your own subscriber](#add-your-own-subscriber) · [See what a worker is doing](#see-what-a-worker-is-doing)
+- **Run:** [Several workers](#run-several-workers) · [Supervisor](#run-workers-with-supervisor) · [Kubernetes](#run-workers-on-kubernetes) · [KEDA](#scale-automatically-on-kubernetes-with-keda)
+- **Operate:** [Deploy a new version](#deploy-a-new-version) · [Rebuild a projection](#rebuild-a-projection) · [Restart workers regularly](#restart-workers-regularly) · [Reserve workers](#reserve-workers-for-certain-subscribers)
+
+Something isn't working? See [Troubleshooting](#troubleshooting).
+
 ### Add your own subscriber
 
 Add an entry to the list of subscribers in `examples/bootstrap.php`:
@@ -248,6 +254,9 @@ php examples/reset.php some-projection
 This calls the `reset` function of the subscriber and starts over with the first event. An idle worker notices that with the next event, or after `maxIdleWait` at the latest (30 seconds by default).
 
 If a subscriber has no `reset` function, its old rows stay in place. In this example, the rebuild would then run into a duplicate key and retry forever.
+
+> [!WARNING]
+> Workers pass all past events to a subscriber that was reset, even if it has the run mode `FROM_NOW`. A subscriber that sends emails would send them again. To skip the past events, stop the workers and call `reset()` followed by `setup()` for that subscriber.
 
 ### Restart workers regularly
 
