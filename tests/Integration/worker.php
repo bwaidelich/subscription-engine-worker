@@ -28,11 +28,7 @@ require __DIR__ . '/../../vendor/autoload.php';
 $config = json_decode($argv[1], true, flags: JSON_THROW_ON_ERROR);
 $dsn = (new DsnParser())->parse((string) getenv('TEST_DATABASE_DSN'));
 $connection = DriverManager::getConnection($dsn);
-$eventStoreConfiguration = DoctrineEventStoreConfiguration::create($connection, 'events');
-if ($config['waiter'] === 'listen') {
-    $eventStoreConfiguration = $eventStoreConfiguration->withNotifications();
-}
-$eventStore = new DoctrineEventStore($eventStoreConfiguration);
+$eventStore = new DoctrineEventStore(DoctrineEventStoreConfiguration::create($connection, 'events'));
 
 $handlerCalls = 0;
 $subscribers = [];
@@ -48,8 +44,8 @@ foreach ($config['subscriptions'] as $id) {
 }
 $engine = new SubscriptionEngine(new DcbEventStoreAdapter($eventStore), new DoctrineSubscriptionStore($connection, 'subscriptions'), Subscribers::fromArray($subscribers));
 
-$waiter = $config['waiter'] === 'listen'
-    ? new CallbackWaiter($eventStore->createWaiter(DriverManager::getConnection($dsn))->waitForNewEvents(...))
+$waiter = $config['waiter'] === 'eventStore'
+    ? new CallbackWaiter($eventStore->createWaiter(DriverManager::getConnection($dsn), 0.1)->waitForNewEvents(...))
     : new SleepWaiter();
 
 $logger = new class extends AbstractLogger {

@@ -30,16 +30,15 @@ The worker never calls `setup()` or `reset()`: Concurrent setups can fail, so `s
 
 ## Waiting for events
 
-`SleepWaiter` polls at the rate of `maxIdleWait`, so lower that option when using it. To wake up right away, `CallbackWaiter` connects anything else that can wait, for example the [LISTEN](https://www.postgresql.org/docs/current/sql-listen.html) support of [wwwision/dcb-eventstore-doctrine](https://github.com/bwaidelich/dcb-eventstore-doctrine):
+`SleepWaiter` polls at the rate of `maxIdleWait`, so lower that option when using it. `CallbackWaiter` connects anything else that can wait, for example the waiter of [wwwision/dcb-eventstore-doctrine](https://github.com/bwaidelich/dcb-eventstore-doctrine). It checks the head of the event store every second, which is cheaper than a cycle of the worker:
 
 ```php
-$eventStore = new DoctrineEventStore(DoctrineEventStoreConfiguration::create($connection, 'events')->withNotifications());
 $waiter = new CallbackWaiter($eventStore->createWaiter($dedicatedConnection)->waitForNewEvents(...));
 ```
 
-`LISTEN` occupies its connection, so it needs one of its own. It has to reach the primary database directly, not through [PgBouncer](https://www.pgbouncer.org/) in transaction mode. `examples/worker.php` reads an address for this from the optional environment variable `LISTEN_DATABASE_DSN`.
+The waiter needs a connection of its own.
 
-The worker tries to claim after each wait, however it ended. While events are pending it calls `wait(0.0)` after each batch, because a listener that doesn't read its notifications fills the queue of PostgreSQL, and appends fail once it is full.
+The worker tries to claim after each wait, however it ended. While events are pending it calls `wait(0.0)` after each batch, so that a waiter that receives notifications can process them in the meantime.
 
 ## What is guaranteed
 

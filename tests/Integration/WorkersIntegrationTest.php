@@ -55,7 +55,7 @@ final class WorkersIntegrationTest extends TestCase
             $this->connection->executeStatement('DROP TABLE IF EXISTS ' . $table);
         }
         $this->connection->executeStatement('CREATE TABLE projection (sequence BIGSERIAL, subscription VARCHAR(50) NOT NULL, position BIGINT NOT NULL, worker VARCHAR(50) NOT NULL, UNIQUE (subscription, position))');
-        $this->eventStore(false)->setup();
+        $this->eventStore()->setup();
         $this->runDirectory = sys_get_temp_dir() . '/' . uniqid('subscription-engine-worker-', true);
         mkdir($this->runDirectory);
     }
@@ -80,7 +80,7 @@ final class WorkersIntegrationTest extends TestCase
     public static function waiters(): iterable
     {
         yield 'sleep-poll' => ['sleep'];
-        yield 'LISTEN' => ['listen'];
+        yield 'event store waiter' => ['eventStore'];
     }
 
     #[Test]
@@ -88,14 +88,13 @@ final class WorkersIntegrationTest extends TestCase
     public function twoWorkersHandleEveryEventExactlyOnceAndStopGracefully(string $waiter): void
     {
         $this->setupSubscriptions();
-        $notify = $waiter === 'listen';
-        $this->append(200, $notify);
+        $this->append(200);
 
         $this->startWorker('w1', ['waiter' => $waiter]);
         $this->startWorker('w2', ['waiter' => $waiter]);
         // a concurrent writer, including appends while the workers might be idle
         for ($i = 0; $i < 20; $i++) {
-            $this->append(10, $notify);
+            $this->append(10);
             usleep(20_000);
         }
         $this->waitForRows(400 * count(self::SUBSCRIPTIONS));
@@ -111,16 +110,16 @@ final class WorkersIntegrationTest extends TestCase
     }
 
     #[Test]
-    public function aListeningWorkerWakesUpFromANotificationLongBeforeItsTimeout(): void
+    public function aWorkerWithTheEventStoreWaiterWakesUpLongBeforeItsTimeout(): void
     {
         $this->setupSubscriptions();
-        $this->startWorker('w1', ['waiter' => 'listen', 'maxIdleWait' => 30.0]);
+        $this->startWorker('w1', ['waiter' => 'eventStore', 'maxIdleWait' => 30.0]);
         $this->waitForActive();
         // the first waits of the waiter return immediately, let it block
         usleep(500_000);
 
         $start = microtime(true);
-        $this->append(1, true);
+        $this->append(1);
         $this->waitForRows(count(self::SUBSCRIPTIONS), 10.0);
 
         self::assertLessThan(5.0, microtime(true) - $start);
@@ -130,7 +129,7 @@ final class WorkersIntegrationTest extends TestCase
     public function aWorkerKilledInTheMiddleOfABatchLeavesNothingBehindAndAnotherOneTakesOver(): void
     {
         $this->setupSubscriptions();
-        $this->append(300, false);
+        $this->append(300);
 
         $this->startWorker('killed', ['waiter' => 'sleep', 'limit' => 100, 'killAtHandlerCall' => 50]);
         $this->waitForExit('killed');
@@ -150,8 +149,7 @@ final class WorkersIntegrationTest extends TestCase
     public function workersRecoverIfTheirConnectionsAreTerminatedInTheMiddleOfABatch(string $waiter): void
     {
         $this->setupSubscriptions();
-        $notify = $waiter === 'listen';
-        $this->append(300, $notify);
+        $this->append(300);
         $this->startWorker('w1', ['waiter' => $waiter, 'sleepUs' => 2000]);
         $this->startWorker('w2', ['waiter' => $waiter, 'sleepUs' => 2000]);
 
@@ -171,8 +169,7 @@ final class WorkersIntegrationTest extends TestCase
     public function idleWorkersRecoverIfTheirConnectionsAreTerminated(string $waiter): void
     {
         $this->setupSubscriptions();
-        $notify = $waiter === 'listen';
-        $this->append(10, $notify);
+        $this->append(10);
         $this->startWorker('w1', ['waiter' => $waiter]);
         $this->startWorker('w2', ['waiter' => $waiter]);
         $this->waitForRows(10 * count(self::SUBSCRIPTIONS));
@@ -180,7 +177,7 @@ final class WorkersIntegrationTest extends TestCase
 
         $this->terminateOtherConnections();
         usleep(100_000);
-        $this->append(10, $notify);
+        $this->append(10);
         $this->waitForRows(20 * count(self::SUBSCRIPTIONS));
         $this->stopWorker('w1');
         $this->stopWorker('w2');
@@ -199,7 +196,7 @@ final class WorkersIntegrationTest extends TestCase
         $root = __DIR__ . '/../../examples/';
         exec(sprintf('DATABASE_DSN=%s %s %s 2>&1', escapeshellarg($environment['DATABASE_DSN']), escapeshellarg(PHP_BINARY), escapeshellarg($root . 'setup.php')), $output, $exitCode);
         self::assertSame(0, $exitCode, implode("\n", $output));
-        $this->append(3, true);
+        $this->append(3);
 
         $stderr = $this->runDirectory . '/example.err';
         $process = proc_open([PHP_BINARY, $root . 'worker.php'], [1 => ['file', $stderr, 'a'], 2 => ['file', $stderr, 'a']], $pipes, null, $environment);
@@ -225,7 +222,7 @@ final class WorkersIntegrationTest extends TestCase
             $output = [];
             exec(sprintf('DATABASE_DSN=%s %s %s some-projection 2>&1', escapeshellarg($environment['DATABASE_DSN']), escapeshellarg(PHP_BINARY), escapeshellarg($root . 'reset.php')), $output, $exitCode);
             self::assertSame(0, $exitCode, implode("\n", $output));
-            // a reset sends no notification, so a new event wakes up the idle worker
+            // a reset doesn't move the head of the event store, so a new event wakes up the idle worker
             $output = [];
             exec(sprintf('DATABASE_DSN=%s %s %s 2>&1', escapeshellarg($environment['DATABASE_DSN']), escapeshellarg(PHP_BINARY), escapeshellarg($root . 'append-event.php')), $output, $exitCode);
             self::assertSame(0, $exitCode, implode("\n", $output));
@@ -256,7 +253,7 @@ final class WorkersIntegrationTest extends TestCase
     public function theDocumentedScalingQueryReturnsTheNumberOfWorkersThatCanDoWork(): void
     {
         $this->setupSubscriptions(['booting', 'lagging', 'almost', 'current', 'error']);
-        $this->append(500, false);
+        $this->append(500);
         $positions = ['booting' => 0, 'lagging' => 399, 'almost' => 400, 'current' => 500, 'error' => 0];
         foreach ($positions as $id => $position) {
             $status = match ($id) {
@@ -279,20 +276,19 @@ final class WorkersIntegrationTest extends TestCase
     private function setupSubscriptions(array $ids = self::SUBSCRIPTIONS): void
     {
         $subscribers = array_map(static fn(string $id) => Subscriber::create($id, static function (): void {}), $ids);
-        $engine = new SubscriptionEngine(new DcbEventStoreAdapter($this->eventStore(false)), new DoctrineSubscriptionStore($this->connection, 'subscriptions'), Subscribers::fromArray($subscribers));
+        $engine = new SubscriptionEngine(new DcbEventStoreAdapter($this->eventStore()), new DoctrineSubscriptionStore($this->connection, 'subscriptions'), Subscribers::fromArray($subscribers));
         $result = $engine->setup();
         self::assertNull($result->errors);
     }
 
-    private function eventStore(bool $notify): DoctrineEventStore
+    private function eventStore(): DoctrineEventStore
     {
-        $configuration = DoctrineEventStoreConfiguration::create($this->connection, 'events');
-        return new DoctrineEventStore($notify ? $configuration->withNotifications() : $configuration);
+        return new DoctrineEventStore(DoctrineEventStoreConfiguration::create($this->connection, 'events'));
     }
 
-    private function append(int $count, bool $notify): void
+    private function append(int $count): void
     {
-        $this->eventStore($notify)->append(Events::fromArray(array_fill(0, $count, Event::create('SomethingHappened', '{}'))));
+        $this->eventStore()->append(Events::fromArray(array_fill(0, $count, Event::create('SomethingHappened', '{}'))));
     }
 
     /**

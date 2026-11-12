@@ -29,7 +29,7 @@ return (static function (): array {
         throw new RuntimeException('The environment variable DATABASE_DSN is not set');
     }
     $connection = DriverManager::getConnection((new DsnParser())->parse($dsn));
-    $eventStore = new DoctrineEventStore(DoctrineEventStoreConfiguration::create($connection, 'events')->withNotifications());
+    $eventStore = new DoctrineEventStore(DoctrineEventStoreConfiguration::create($connection, 'events'));
     /** @var SubscriptionEngine<SequencedEvent> $engine */
     $engine = new SubscriptionEngine(
         new DcbEventStoreAdapter($eventStore),

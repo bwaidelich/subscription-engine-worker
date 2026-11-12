@@ -10,10 +10,10 @@ use Wwwision\SubscriptionEngineWorker\WorkerOptions;
 
 ['connection' => $connection, 'eventStore' => $eventStore, 'engine' => $engine] = require __DIR__ . '/bootstrap.php';
 
-// LISTEN occupies its connection. It has to reach the primary directly, not through PgBouncer in transaction mode
-$listenConnection = DriverManager::getConnection((new DsnParser())->parse((string) (getenv('LISTEN_DATABASE_DSN') ?: getenv('DATABASE_DSN'))));
+// The waiter checks the head of the event store every second, on a connection of its own
+$waiterConnection = DriverManager::getConnection((new DsnParser())->parse((string) getenv('DATABASE_DSN')));
 
-$worker = new Worker($engine, new CallbackWaiter($eventStore->createWaiter($listenConnection)->waitForNewEvents(...)), WorkerOptions::create(
+$worker = new Worker($engine, new CallbackWaiter($eventStore->createWaiter($waiterConnection)->waitForNewEvents(...)), WorkerOptions::create(
     limit: 500,
     maxRuntime: 3600.0,
     memoryLimit: 256 * 1024 * 1024,

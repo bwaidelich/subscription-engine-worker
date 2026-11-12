@@ -134,7 +134,7 @@ $options = WorkerOptions::create(maxIdleWait: 1.0, recover: $connection->close(.
 > [!WARNING]
 > Use `Level::Warning` or above in production. `Level::Info` is useful for trying things out, but it writes one line per event and subscriber.
 
-This example also shows the simplest way to wait for events. `SleepWaiter` checks for new events every `maxIdleWait` seconds, and works with every event store. `examples/worker.php` instead uses PostgreSQL's [LISTEN](https://www.postgresql.org/docs/current/sql-listen.html) to wake up right away, see [Waiting for events](./docs/how-it-works.md#waiting-for-events).
+This example also shows the simplest way to wait for events. `SleepWaiter` checks for new events every `maxIdleWait` seconds, and works with every event store. `examples/worker.php` instead uses the waiter of the event store, which checks for new events every second on a connection of its own, see [Waiting for events](./docs/how-it-works.md#waiting-for-events).
 
 ### Run several workers
 
