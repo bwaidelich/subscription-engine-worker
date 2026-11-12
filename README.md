@@ -102,6 +102,7 @@ Subscriber::create(
 
 - `setup` creates what the subscriber needs
 - `reset` removes its data, so that the projection can be rebuilt
+- `filter` (optional) passes only matching events to the subscriber. As a worker catches up one subscription at a time, the event store only returns those events, for example `filter: Query::fromItems(QueryItem::create(eventTypes: 'SomethingHappened'))`. [Details](https://github.com/bwaidelich/subscription-engine/blob/main/docs/how-it-works.md#filtered-subscribers)
 
 With all workers stopped, run the setup again and start them. The new subscriber starts with the first event, so it also receives the events from the past:
 
