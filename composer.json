@@ -1,7 +1,7 @@
 {
     "name": "wwwision/subscription-engine-worker",
     "description": "Long-running worker loop for the wwwision/subscription-engine",
-    "type": "package",
+    "type": "library",
     "license": "MIT",
     "authors": [
         {
