@@ -3,7 +3,7 @@
 Keeps your event-sourced read models up to date in the background: Start the same PHP script as often as you like, and scale by changing only that number.
 
 > [!NOTE]
-> This package isn't on Packagist yet, because it requires version 2.0 of [wwwision/subscription-engine](https://github.com/bwaidelich/subscription-engine), which is not released. Until then, the [quick start](#quick-start) runs from a checkout of this repository.
+> This package isn't released yet. Until then, the [quick start](#quick-start) runs from a checkout of this repository.
 
 ## What does it do?
 
