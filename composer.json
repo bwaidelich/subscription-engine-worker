@@ -35,9 +35,9 @@
         "phpunit/phpunit": "^11",
         "roave/security-advisories": "dev-latest",
         "symfony/yaml": "^7",
-        "wwwision/dcb-eventstore-doctrine": "dev-main",
-        "wwwision/subscription-engine-dcb-adapter": "dev-main",
-        "wwwision/subscription-engine-doctrine": "dev-main"
+        "wwwision/dcb-eventstore-doctrine": "^7",
+        "wwwision/subscription-engine-dcb-adapter": "^2",
+        "wwwision/subscription-engine-doctrine": "^1.2"
     },
     "suggest": {
         "ext-pcntl": "Required for the graceful shutdown on SIGTERM and SIGINT, unless handleSignals is disabled"
@@ -63,7 +63,5 @@
             "@test:cs",
             "@test:phpunit"
         ]
-    },
-    "minimum-stability": "dev",
-    "prefer-stable": true
+    }
 }
